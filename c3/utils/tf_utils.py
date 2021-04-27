@@ -141,7 +141,7 @@ def tf_dU_of_t(h0, hks, cflds_t, dt):
     while ii < len(hks):
         h += cflds_t[ii] * hks[ii]
         ii += 1
-    terms = int(1e12 * dt) + 2
+    # terms = int(1e12 * dt) + 2
     # dU = tf_expm(-1j * h * dt, terms)
     # TODO Make an option for the exponentation method
     dU = tf.linalg.expm(-1j * h * dt)
@@ -186,10 +186,25 @@ def tf_dU_of_t_lind(h0, hks, col_ops, cflds_t, dt):
         )
         lind_op = lind_op + super_clp - anticomm_L_clp - anticomm_R_clp
     # terms = int(1e12 * dt) # Eyeball number of terms in expm
-#     print('terms in exponential: ', terms)
+    #     print('terms in exponential: ', terms)
     # dU = tf_expm(lind_op * dt, terms)
     # Built-in tensorflow exponential below
     dU = tf.linalg.expm(lind_op * dt)
+    return dU
+
+
+@tf.function
+def tf_propagation_vectorized(h0, hks, cflds_t, dt):
+    dt = tf.cast(dt, dtype=tf.complex128)
+    cflds_t = tf.cast(cflds_t, dtype=tf.complex128)
+    hks = tf.cast(hks, dtype=tf.complex128)
+    cflds = tf.expand_dims(tf.expand_dims(cflds_t, 2), 3)
+    hks = tf.expand_dims(hks, 1)
+    h0 = tf.expand_dims(h0, 0)
+    prod = cflds * hks
+    h = h0 + tf.reduce_sum(prod, axis=0)
+    dh = -1.0j * h * dt
+    dU = tf.linalg.expm(dh)
     return dU
 
 
@@ -343,14 +358,14 @@ def evaluate_sequences(U_dict: dict, sequences: list):
     ----------
     U_dict : dict
         Dictionary of unitary representation of gates.
-    
+
     sequences : list
         List of keys from U_dict specifying a gate sequence.
         The sequence is multiplied from the left, i.e.
             sequence = [U0, U1, U2, ...]
         is applied as
             ... U2 * U1 * U0
-    
+
     Returns
     -------
     tf.tensor
@@ -365,36 +380,64 @@ def evaluate_sequences(U_dict: dict, sequences: list):
     U = []
     for sequence in sequences:
         if len(sequence) == 0:
-            U.append(tf.linalg.eye(dim,dtype=dtype))
+            U.append(tf.linalg.eye(dim, dtype=dtype))
         else:
             Us = []
             for gate in sequence:
                 Us.append(gates[gate])
+
+            Us = tf.cast(Us, tf.complex128)
             U.append(tf_matmul_left(Us))
             # ### WARNING WARNING ^^ look there, it says left WARNING
     return U
 
 
-def tf_matmul_left(dUs):
+# def tf_matmul_left(dUs):
+#     """
+#     Multiplies a list of matrices from the left.
+#
+#     """
+#     U = dUs[0]
+#     for ii in range(1, len(dUs)):
+#         U = tf.matmul(dUs[ii], U, name="timestep_" + str(ii))
+#     return U
+
+
+@tf.function
+def tf_matmul_left(dUs: tf.Tensor):
     """
+    Parameters:
+        dUs: tf.Tensor
+            Tensorlist of shape (N, n,m)
+            with number N matrices of size nxm
     Multiplies a list of matrices from the left.
 
     """
-    U = dUs[0]
-    for ii in range(1, len(dUs)):
-        U = tf.matmul(dUs[ii], U, name="timestep_" + str(ii))
-    return U
+    return tf.foldr(lambda a, x: tf.matmul(a, x), dUs)
 
 
+# def tf_matmul_right(dUs):
+#     """
+#     Multiplies a list of matrices from the right.
+#
+#     """
+#     U = dUs[0]
+#     for ii in range(1, len(dUs)):
+#         U = tf.matmul(U, dUs[ii], name="timestep_" + str(ii))
+#     return U
+
+
+@tf.function
 def tf_matmul_right(dUs):
     """
+    Parameters:
+        dUs: tf.Tensor
+            Tensorlist of shape (N, n,m)
+            with number N matrices of size nxm
     Multiplies a list of matrices from the right.
 
     """
-    U = dUs[0]
-    for ii in range(1, len(dUs)):
-        U = tf.matmul(U, dUs[ii], name="timestep_" + str(ii))
-    return U
+    return tf.foldl(lambda a, x: tf.matmul(a, x), dUs)
 
 
 def tf_matmul_n(tensor_list):
@@ -417,7 +460,7 @@ def tf_matmul_n(tensor_list):
 def tf_log10(x):
     """Tensorflow had no logarithm with base 10. This is ours."""
     numerator = tf.log(x)
-    denominator = tf.log(tf.Variable(10, dtype=numerator.dtype))
+    denominator = tf.log(tf.constant(10, dtype=numerator.dtype))
     return numerator / denominator
 
 
@@ -437,14 +480,14 @@ def tf_ave(x: list):
     return tf.add_n(x) / len(x)
 
 
-def tf_diff(l):
+def tf_diff(l):  # noqa
     """
     Running difference of the input list l. Equivalent to np.diff, except it
     returns the same shape by adding a 0 in the last entry.
     """
     dim = l.shape[0] - 1
-    diagonal = tf.Variable([-1] * dim + [0], dtype=l.dtype)
-    offdiagonal = tf.Variable([1] * dim, dtype=l.dtype)
+    diagonal = tf.constant([-1] * dim + [0], dtype=l.dtype)
+    offdiagonal = tf.constant([1] * dim, dtype=l.dtype)
     proj = tf.linalg.diag(diagonal) + tf.linalg.diag(offdiagonal, k=1)
     return tf.linalg.matvec(proj, l)
 
@@ -501,7 +544,7 @@ def tf_expm_dynamic(A, acc=1e-4):
     A_powers = A
     r += A
 
-    ii = tf.Variable(2, dtype=tf.complex128)
+    ii = tf.constant(2, dtype=tf.complex128)
     while tf.reduce_max(tf.abs(A_powers)) > acc:
         A_powers = tf.matmul(A_powers, A) / ii
         ii += 1
@@ -564,7 +607,7 @@ def tf_choi_to_chi(U, dims=None):
     """
     if dims is None:
         dims = [tf.sqrt(tf.cast(U.shape[0], U.dtype))]
-    B = tf.Variable(qt_utils.pauli_basis([2] * len(dims)), dtype=tf.complex128)
+    B = tf.constant(qt_utils.pauli_basis([2] * len(dims)), dtype=tf.complex128)
     return tf.linalg.adjoint(B) @ U @ B
 
 
@@ -673,8 +716,7 @@ def tf_average_fidelity(A, B, lvls=None):
     if lvls is None:
         lvls = tf.cast(B.shape[0], B.dtype)
     Lambda = tf.matmul(
-        tf.linalg.adjoint(tf_project_to_comp(A, lvls, to_super=False)),
-        B
+        tf.linalg.adjoint(tf_project_to_comp(A, lvls, to_super=False)), B
     )
     return tf_super_to_fid(tf_super(Lambda), lvls)
 
@@ -709,5 +751,43 @@ def tf_project_to_comp(A, dims, to_super=False):
     proj = proj_list.pop()
     while not proj_list == []:
         proj = np.kron(proj_list.pop(), proj)
-    P = tf.Variable(proj, dtype=A.dtype)
+    P = tf.constant(proj, dtype=A.dtype)
     return tf.matmul(tf.matmul(P, A, transpose_a=True), P)
+
+
+# @tf.function
+def tf_convolve(sig: tf.Tensor, resp: tf.Tensor):
+    """
+    Compute the convolution with a time response.
+
+    Parameters
+    ----------
+    sig : tf.Tensor
+        Signal which will be convoluted, shape: [N]
+    resp : tf.Tensor
+        Response function to be convoluted with signal, shape: [M]
+
+    Returns
+    -------
+    tf.Tensor
+        convoluted signal of shape [N]
+
+    """
+    sig = tf.cast(sig, dtype=tf.complex128)
+    resp = tf.cast(resp, dtype=tf.complex128)
+
+    sig_len = len(sig)
+    resp_len = len(resp)
+
+    signal_pad = tf.expand_dims(
+        tf.concat([sig, tf.zeros(resp_len, dtype=tf.complex128)], axis=0), 0
+    )
+    resp_pad = tf.expand_dims(
+        tf.concat([resp, tf.zeros(sig_len, dtype=tf.complex128)], axis=0), 0
+    )
+    sig_resp = tf.concat([signal_pad, resp_pad], axis=0)
+
+    fft_sig_resp = tf.signal.fft(sig_resp)
+    fft_conv = tf.math.reduce_prod(fft_sig_resp, axis=0)
+    convolution = tf.signal.ifft(fft_conv)
+    return convolution[:sig_len]

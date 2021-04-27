@@ -23,6 +23,31 @@ from c3.signal.gates import Instruction
 from c3.system.model import Model
 from c3.utils import tf_utils
 
+import matplotlib.pyplot as plt # flo
+from operator import add # flo
+from scipy.fft import fft, fftfreq # flo
+from scipy.signal import blackman # flo
+from scipy.signal import kaiser # flo
+
+
+def align_yaxis(ax1, ax2):
+    """Align zeros of the two axes, zooming them out by same ratio"""
+    axes = (ax1, ax2)
+    extrema = [ax.get_ylim() for ax in axes]
+    tops = [extr[1] / (extr[1] - extr[0]) for extr in extrema]
+    # Ensure that plots (intervals) are ordered bottom to top:
+    if tops[0] > tops[1]:
+        axes, extrema, tops = [list(reversed(l)) for l in (axes, extrema, tops)]
+
+    # How much would the plot overflow if we kept current zoom levels?
+    tot_span = tops[1] + 1 - tops[0]
+
+    b_new_t = extrema[0][0] + tot_span * (extrema[0][1] - extrema[0][0])
+    t_new_b = extrema[1][1] - tot_span * (extrema[1][1] - extrema[1][0])
+    axes[0].set_ylim(extrema[0][0], b_new_t)
+    axes[1].set_ylim(t_new_b, extrema[1][1])
+
+
 class Experiment:
     """
     It models all of the behaviour of the physical experiment, serving as a
@@ -44,9 +69,10 @@ class Experiment:
     def __init__(self, pmap: ParameterMap = None):
         self.pmap = pmap
         self.opt_gates = None
-        self.unitaries = {}
-        self.dUs = {}
+        self.unitaries: dict = {}
+        self.dUs: dict = {}
         self.created_by = None
+        self.logdir: str = None
 
     def set_created_by(self, config):
         """
@@ -120,6 +146,26 @@ class Experiment:
             instructions.append(instr)
 
         self.pmap = ParameterMap(instructions, generator=gen, model=model)
+
+    def read_config(self, filepath: str) -> None:
+        """
+        Load a file and parse it to create a Model object.
+
+        Parameters
+        ----------
+        filepath : str
+            Location of the configuration file
+
+        """
+        with open(filepath, "r") as cfg_file:
+            cfg = hjson.loads(cfg_file.read())
+        model = Model()
+        model.fromdict(cfg["model"])
+        generator = Generator()
+        generator.fromdict(cfg["generator"])
+        pmap = ParameterMap(model=model, generator=generator)
+        pmap.fromdict(cfg["instructions"])
+        self.pmap = pmap
 
     def write_config(self, filepath: str) -> None:
         """
@@ -225,6 +271,37 @@ class Experiment:
             populations_final.append(pops)
         return populations_final, populations_no_rescale
 
+    def get_perfect_gates(self, gate_keys: list = None) -> Dict[str, np.array]:
+        """Return a perfect gateset for the gate_keys.
+
+        Parameters
+        ----------
+        gate_keys: list
+            (Optional) List of gates to evaluate.
+
+        Returns
+        -------
+        Dict[str, np.array]
+            A dictionary of gate names and np.array representation
+            of the corresponding unitary
+
+        Raises
+        ------
+        Exception
+            Raise general exception for undefined gate
+        """
+        instructions = self.pmap.instructions
+        gates = {}
+        dims = self.pmap.model.dims
+        if gate_keys is None:
+            gate_keys = instructions.keys()  # type: ignore
+        for gate in gate_keys:
+            gates[gate] = perfect_gate(gates_str=gate, dims=dims)
+
+        # TODO parametric gates
+
+        return gates
+
     def get_gates(self):
         """
         Compute the unitary representation of operations. If no operations are
@@ -260,15 +337,10 @@ class Experiment:
                 for line, ctrls in instr.comps.items():
                     # TODO calculate properly the average frequency that each qubit sees
                     offset = 0.0
-                    if "gauss" in ctrls:
-                        if ctrls["gauss"].params["amp"] != 0.0:
-                            offset = ctrls["gauss"].params["freq_offset"].get_value()
-                    if "flux" in ctrls:
-                        if ctrls["flux"].params["amp"] != 0.0:
-                            offset = ctrls["flux"].params["freq_offset"].get_value()
-                    if "pwc" in ctrls:
-                        offset = ctrls["pwc"].params["freq_offset"].get_value()
-                    # print("gate: ", gate, "; line: ", line, "; offset: ", offset)
+                    for ctrl in ctrls.values():
+                        if "freq_offset" in ctrl.params.keys():
+                            if ctrl.params["amp"] != 0.0:
+                                offset = ctrl.params["freq_offset"].get_value()
                     freqs[line] = tf.cast(
                         ctrls["carrier"].params["freq"].get_value() + offset,
                         tf.complex128,
@@ -277,7 +349,7 @@ class Experiment:
                         ctrls["carrier"].params["framechange"].get_value(),
                         tf.complex128,
                     )
-                t_final = tf.Variable(instr.t_end - instr.t_start, dtype=tf.complex128)
+                t_final = tf.constant(instr.t_end - instr.t_start, dtype=tf.complex128)
                 FR = model.get_Frame_Rotation(t_final, freqs, framechanges)
                 if model.lindbladian:
                     SFR = tf_utils.tf_super(FR)
@@ -294,7 +366,7 @@ class Experiment:
                     for line, ctrls in instr.comps.items():
                         amp, sum = generator.devices["awg"].get_average_amp()
                         amps[line] = tf.cast(amp, tf.complex128)
-                    t_final = tf.Variable(
+                    t_final = tf.constant(
                         instr.t_end - instr.t_start, dtype=tf.complex128
                     )
                     dephasing_channel = model.get_dephasing_channel(t_final, amps)
@@ -302,6 +374,154 @@ class Experiment:
             gates[gate] = U
             self.unitaries = gates
         return gates
+
+    @staticmethod
+    def __find_nearest(array, value):  # needed in plot_signal and measure_fft_peaks
+        array = np.asarray(array)
+        idx = (np.abs(array - value)).argmin()
+        return idx
+
+    def plot_signal(self, gate_key: str, lofreq, sideband, channel: str = None):  # flo
+        """
+
+        """
+        generator = self.pmap.generator
+        instructions = self.pmap.instructions
+
+        try:
+            instr = instructions[gate_key]
+        except KeyError:
+            raise Exception(
+                f"C3:Error: Gate '{gate_key}' is not defined."
+                f" Available gates are:\n {list(instructions.keys())}."
+            )
+
+        signal: dict = generator.generate_signals(instr) #, True
+
+        with plt.rc_context({'figure.facecolor': 'white'}):  # 'axes.edgecolor': 'orange', 'xtick.color': 'red', 'ytick.color': 'green',
+            fig, axs = plt.subplots(2, 1, dpi=150)
+            fig.set_figheight(10)
+            fig.set_figwidth(10)
+
+            # TODO messy with no channel
+            if channel is None:
+                for key in signal.keys():
+                    x = signal[key]['ts']
+                    y = signal[key]['values']
+                    axs[0].plot(x / 1e-9, y)
+                plt.legend(list(map(add, ['channel ']*len(signal.keys()), list(signal.keys()))))
+
+            else:
+                x = signal[channel]['ts']
+                y = signal[channel]['values']
+                line1 = axs[0].plot(x / 1e-9, y / 1e-9, label='channel ' + channel)
+                iq_signal = generator.devices['AWG'].process(instr, channel)
+                ax2 = axs[0].twinx()
+                line2 = ax2.plot(iq_signal['ts'] / 1e-9, iq_signal['inphase'], label='inphase')
+                line3 = ax2.plot(iq_signal['ts'] / 1e-9, iq_signal['quadrature'], label='quadrature')
+                align_yaxis(axs[0], ax2)
+                y2 = 0.5*np.cos(2*np.pi*53e6*x)
+                #ax2.plot(x / 1e-9, y2, '--')
+                lines = line1 + line2 + line3
+                labels = [l.get_label() for l in lines]
+                axs[0].legend(lines, labels, loc=1)
+                ax2.set_ylabel('Amplitude I & Q [V]')
+
+            for ax in axs:
+                ax.grid(linestyle="--")
+                ax.tick_params(
+                    direction="in", left=True, right=True, top=True, bottom=True
+                )
+            axs[0].set_xlabel('Time [ns]')
+            axs[0].set_ylabel('Amplitude Signal [V]')
+
+            if channel is not None:
+                N = len(signal[channel]['values'])
+                dt = signal[channel]['ts'][1]-signal[channel]['ts'][0]
+                signalf = fft(signal[channel]['values'].numpy())
+                w = kaiser(N, beta=14)
+                signalwf = fft(signal[channel]['values'].numpy()*w)
+                xf = fftfreq(N, dt)[:N//2]
+                axs[1].semilogy(xf[1:N // 2]/1e9, 2.0 / N * np.abs(signalf[1:N // 2]), '-b', label='FFT')
+                axs[1].semilogy(xf[1:N // 2]/1e9, 2.0 / N * np.abs(signalwf[1:N // 2]), '-r', label='FFT w/ window')
+                idx = self.__find_nearest(xf, (lofreq+sideband))
+                #axs[1].scatter((lofreq+sideband)/1e9, 2.0 / N * np.abs(signalwf[idx]),s=20,c='r')
+                axs[1].axvline(lofreq/1e9, 1e-2, 1e1)
+                axs[1].axvline((lofreq+sideband)/1e9, 1e-2, 1e1)
+                axs[1].axvline((lofreq-sideband)/1e9, 1e-2, 1e1)
+                axs[1].set_xlim([4.5, 5.5])
+                axs[1].set_xlabel('Frequency [GHz]')
+                axs[1].set_ylabel('Amplitude [V*1e9 Hz/V]')
+                axs[1].legend()
+
+        #plt.savefig('test.png')
+
+    def measure_fft_peaks(self, gate_key: str, lofreq, sideband, channel: str, awg_errortype: str, error_values: np.array) -> dict:
+
+        generator = self.pmap.generator
+        instructions = self.pmap.instructions
+
+        try:
+            instr = instructions[gate_key]
+        except KeyError:
+            raise Exception(
+                f"C3:Error: Gate '{gate_key}' is not defined."
+                f" Available gates are:\n {list(instructions.keys())}."
+            )
+
+        peaks = dict()
+        key = str()
+
+        for errval in error_values:
+
+            print(f'Calculating with {awg_errortype}: {errval}')
+            setattr(self.pmap.generator.devices['AWG'], awg_errortype, errval)
+            signal: dict = generator.generate_signals(instr)
+            N = len(signal[channel]['values'])
+            dt = signal[channel]['ts'][1] - signal[channel]['ts'][0]
+            w = kaiser(N, beta=14)
+
+            signalwf = fft(signal[channel]['values'].numpy() * w)
+            xf = fftfreq(N, dt)[:N // 2]
+
+            for i in np.arange(-3, 4):
+                idx = self.__find_nearest(xf, (lofreq + i*sideband))
+                if i < 0:
+                    key = "{}LSB".format(abs(i))
+                elif i > 0:
+                    key = "{}RSB".format(i)
+                else:
+                    key = "LO"
+                try:
+                    peaks[key].append(2.0 / N * np.abs(signalwf[idx]))
+                except KeyError:
+                    peaks[key] = [2.0 / N * np.abs(signalwf[idx])]
+
+        peaks[awg_errortype] = error_values
+
+        return peaks
+
+    def get_signal_values(self, gate_key: str, channel: str):#flo
+        """
+        Returns
+        -------
+        dict
+            A dictionary
+        """
+        generator = self.pmap.generator
+        instructions = self.pmap.instructions
+
+        try:
+            instr = instructions[gate_key]
+        except KeyError:
+            raise Exception(
+                f"C3:Error: Gate '{gate_key}' is not defined."
+                f" Available gates are:\n {list(instructions.keys())}."
+            )
+        signal: dict = generator.generate_signals(instr)
+        iq_signal = generator.devices['AWG'].process(instr, channel)
+
+        return {"rf": signal, "iq": iq_signal}
 
     def propagation(self, signal: dict, gate):
         """
@@ -330,15 +550,16 @@ class Experiment:
             signals.append(signal[key]["values"])
             ts = signal[key]["ts"]
             hks.append(hctrls[key])
-        dt = tf.Variable(ts[1].numpy() - ts[0].numpy(), dtype=tf.complex128)
+        dt = tf.constant(ts[1].numpy() - ts[0].numpy(), dtype=tf.complex128)
 
         if model.lindbladian:
             col_ops = model.get_Lindbladians()
             dUs = tf_utils.tf_propagation_lind(h0, hks, col_ops, signals, dt)
         else:
-            dUs = tf_utils.tf_propagation(h0, hks, signals, dt)
+            dUs = tf_utils.tf_propagation_vectorized(h0, hks, signals, dt)
         self.dUs[gate] = dUs
         self.ts = ts
+        dUs = tf.cast(dUs, tf.complex128)
         U = tf_utils.tf_matmul_left(dUs)
         self.U = U
         return U
@@ -382,7 +603,6 @@ class Experiment:
             os.makedirs(self.logdir + "unitaries/", exist_ok=exist_ok)
             self.store_unitaries_counter = 0
 
-
     def store_Udict(self, goal):
         """
         Save unitary as text and pickle.
@@ -407,7 +627,7 @@ class Experiment:
             pickle.dump(self.unitaries, file)
         for key, value in self.unitaries.items():
             # Windows is not able to parse ":" as file path
-            np.savetxt(folder + key.replace(':','.') + ".txt", value)
+            np.savetxt(folder + key.replace(":", ".") + ".txt", value)
 
     def populations(self, state, lindbladian):
         """
@@ -430,12 +650,12 @@ class Experiment:
             pops = tf.math.real(tf.linalg.diag_part(rho))
             return tf.reshape(pops, shape=[pops.shape[0], 1])
         else:
-            return tf.abs(state)**2
+            return tf.abs(state) ** 2
 
     def expect_oper(self, state, lindbladian, oper):
         if lindbladian:
             rho = tf_utils.tf_vec_to_dm(state)
         else:
             rho = tf_utils.tf_state_to_dm(state)
-        trace = np.trace(np.matmul(rho,oper))
-        return [[np.real(trace)]] #,[np.imag(trace)]]
+        trace = np.trace(np.matmul(rho, oper))
+        return [[np.real(trace)]]  # ,[np.imag(trace)]]
