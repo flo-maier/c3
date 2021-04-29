@@ -33,6 +33,7 @@ def create_experiment(gatetime: np.float64 = 7e-9) -> Exp:
     awg_res = 2e9
     sideband = 50e6
     lo_freq = 5e9 + sideband
+    lo2_freq = lo_freq + anhar  # for 1<->2
 
     # ### MAKE MODEL
     q1 = chip.Qubit(
@@ -126,7 +127,7 @@ def create_experiment(gatetime: np.float64 = 7e-9) -> Exp:
         name="gauss",
         desc="Gaussian comp for single-qubit gates",
         params=gauss_params_single,
-        hape=envelopes.gaussian_nonorm,
+        shape=envelopes.gaussian_nonorm,
     )
     nodrive_env = pulse.Envelope(
         name="no_drive",
@@ -152,11 +153,30 @@ def create_experiment(gatetime: np.float64 = 7e-9) -> Exp:
         params=carrier_parameters,
     )
 
+    #  for 1<->2
+    carrier2_parameters = {
+        "freq": Qty(
+            value=lo2_freq,
+            min_val=4.5e9,
+            max_val=6e9,
+            unit="Hz 2pi",
+        ),
+        "framechange": Qty(value=0.0, min_val=-np.pi, max_val=3 * np.pi, unit="rad"),
+    }
+    carr2 = pulse.Carrier(
+        name="carrier",
+        desc="Frequency of the local oscillator 2",
+        params=carrier2_parameters,
+    )
+
     RX90p = gates.Instruction(name="RX90p", t_start=0.0, t_end=t_final, channels=["d1"])
+    RX90p12 = gates.Instruction(name="RX90p12", t_start=0.0, t_end=t_final, channels=["d1"])
     QId = gates.Instruction(name="Id", t_start=0.0, t_end=t_final, channels=["d1"])
 
     RX90p.add_component(gauss_env_single, "d1")
     RX90p.add_component(carr, "d1")
+    RX90p12.add_component(gauss_env_single, "d1")
+    RX90p12.add_component(carr2, "d1")
     QId.add_component(nodrive_env, "d1")
     QId.add_component(copy.deepcopy(carr), "d1")
     QId.comps["d1"]["carrier"].params["framechange"].set_value(
@@ -173,7 +193,7 @@ def create_experiment(gatetime: np.float64 = 7e-9) -> Exp:
     RY90m.comps["d1"]["gauss"].params["xy_angle"].set_value(1.5 * np.pi)
 
     parameter_map = PMap(
-        instructions=[QId, RX90p, RY90p, RX90m, RY90m], model=model, generator=generator
+        instructions=[QId, RX90p, RY90p, RX90m, RY90m, RX90p12], model=model, generator=generator
     )
 
     # ### MAKE EXPERIMENT

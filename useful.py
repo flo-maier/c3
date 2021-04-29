@@ -55,6 +55,8 @@ def plot_dynamics(exp, psi_init, seq, goal=-1):
         axs.set_ylabel('Population')
         plt.legend(model.state_labels)
         pass
+        fig.savefig('20ns.png')
+        return ts, pop_t.T
 
 
 def plot_fidelity(gate: str, channel: str, awg_errortype: str, error_values: np.array ):

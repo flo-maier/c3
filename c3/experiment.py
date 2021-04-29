@@ -454,7 +454,7 @@ class Experiment:
                 axs[1].set_ylabel('Amplitude [V*1e9 Hz/V]')
                 axs[1].legend()
 
-        #plt.savefig('test.png')
+        return fig, axs
 
     def measure_fft_peaks(self, gate_key: str, lofreq, sideband, channel: str, awg_errortype: str, error_values: np.array) -> dict:
 
