@@ -14,7 +14,7 @@ import c3.libraries.envelopes as envelopes
 import c3.system.tasks as tasks
 
 
-def create_experiment(gatetime: np.float64 = 7e-9) -> Exp:
+def create_experiment(gatetime: np.float64 = 7e-9, anhar = -210e6) -> Exp:
     """
 
     Parameters
@@ -25,7 +25,7 @@ def create_experiment(gatetime: np.float64 = 7e-9) -> Exp:
     dressed = True
     qubit_lvls = 3
     freq = 5e9
-    anhar = -210e6
+    anhar = anhar
     init_temp = 0
     qubit_temp = 0
     t_final = gatetime  # Time for single qubit gates
@@ -47,8 +47,8 @@ def create_experiment(gatetime: np.float64 = 7e-9) -> Exp:
         ),
         anhar=Qty(
             value=anhar,
-            min_val=-380e6,
-            max_val=-120e6,
+            # min_val=-380e9,
+            # max_val=-120e6,
             unit="Hz 2pi",
         ),
         hilbert_dim=qubit_lvls,
@@ -123,6 +123,33 @@ def create_experiment(gatetime: np.float64 = 7e-9) -> Exp:
         "delta": Qty(value=-1, min_val=-5, max_val=3, unit=""),
     }
 
+    gauss_params_pi = {
+        "amp": Qty(value=0.8, min_val=0.4, max_val=0.9, unit="V"),
+        "t_final": Qty(
+            value=t_final, min_val=0.5 * t_final, max_val=1.5 * t_final, unit="s"
+        ),
+        "sigma": Qty(
+            value=t_final / 4, min_val=t_final / 8, max_val=t_final / 2, unit="s"
+        ),
+        "xy_angle": Qty(
+            value=0.0, min_val=-0.5 * np.pi, max_val=2.5 * np.pi, unit="rad"
+        ),
+        "freq_offset": Qty(
+            value=-sideband - 0.5e6,
+            min_val=-60 * 1e6,
+            max_val=-40 * 1e6,
+            unit="Hz 2pi",
+        ),
+        "delta": Qty(value=-1, min_val=-5, max_val=3, unit=""),
+    }
+
+    gauss_env_pi = pulse.Envelope(
+        name="gauss",
+        desc="Gaussian comp for single-qubit gates",
+        params=gauss_params_pi,
+        shape=envelopes.gaussian_nonorm,
+    )
+
     gauss_env_single = pulse.Envelope(
         name="gauss",
         desc="Gaussian comp for single-qubit gates",
@@ -169,14 +196,21 @@ def create_experiment(gatetime: np.float64 = 7e-9) -> Exp:
         params=carrier2_parameters,
     )
 
+    PI01p = gates.Instruction(name="PI01p", t_start=0.0, t_end=t_final, channels=["d1"])
     RX90p = gates.Instruction(name="RX90p", t_start=0.0, t_end=t_final, channels=["d1"])
     RX90p12 = gates.Instruction(name="RX90p12", t_start=0.0, t_end=t_final, channels=["d1"])
+    RXp = gates.Instruction(name="RXp", t_start=0.0, t_end=t_final, channels=["d1"])
     QId = gates.Instruction(name="Id", t_start=0.0, t_end=t_final, channels=["d1"])
 
+    PI01p.add_component(gauss_env_pi, "d1")
+    PI01p.add_component(carr, "d1")
     RX90p.add_component(gauss_env_single, "d1")
     RX90p.add_component(carr, "d1")
     RX90p12.add_component(gauss_env_single, "d1")
     RX90p12.add_component(carr2, "d1")
+    RXp.add_component(gauss_env_pi, "d1")
+    RXp.add_component(carr, "d1")
+
     QId.add_component(nodrive_env, "d1")
     QId.add_component(copy.deepcopy(carr), "d1")
     QId.comps["d1"]["carrier"].params["framechange"].set_value(
@@ -193,7 +227,7 @@ def create_experiment(gatetime: np.float64 = 7e-9) -> Exp:
     RY90m.comps["d1"]["gauss"].params["xy_angle"].set_value(1.5 * np.pi)
 
     parameter_map = PMap(
-        instructions=[QId, RX90p, RY90p, RX90m, RY90m, RX90p12], model=model, generator=generator
+        instructions=[QId, RX90p, RY90p, RX90m, RY90m, RX90p12, PI01p, RXp], model=model, generator=generator
     )
 
     # ### MAKE EXPERIMENT

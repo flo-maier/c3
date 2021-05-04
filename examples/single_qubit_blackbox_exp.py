@@ -126,7 +126,7 @@ def create_experiment(gatetime: np.float64 = 7e-9) -> Exp:
         name="gauss",
         desc="Gaussian comp for single-qubit gates",
         params=gauss_params_single,
-        hape=envelopes.gaussian_nonorm,
+        shape=envelopes.gaussian_nonorm,
     )
     nodrive_env = pulse.Envelope(
         name="no_drive",

@@ -55,8 +55,21 @@ def plot_dynamics(exp, psi_init, seq, goal=-1):
         axs.set_ylabel('Population')
         plt.legend(model.state_labels)
         pass
-        fig.savefig('20ns.png')
+        fig.savefig('rabi12_2.png')
         return ts, pop_t.T
+
+
+def simulate(exp, psi_init, seq):
+
+    model = exp.pmap.model
+    dUs = exp.dUs
+    psi_t = psi_init.numpy()
+    pop_t = exp.populations(psi_t, model.lindbladian)
+    for gate in seq:
+        for du in dUs[gate]:
+            psi_t = np.matmul(du.numpy(), psi_t)
+            pops = exp.populations(psi_t, model.lindbladian)
+            pop_t = np.append(pop_t, pops, axis=1)
 
 
 def plot_fidelity(gate: str, channel: str, awg_errortype: str, error_values: np.array ):

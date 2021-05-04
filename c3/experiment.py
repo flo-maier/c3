@@ -28,6 +28,10 @@ from operator import add # flo
 from scipy.fft import fft, fftfreq # flo
 from scipy.signal import blackman # flo
 from scipy.signal import kaiser # flo
+import c3.signal.pulse as pulse
+import c3.libraries.envelopes as envelopes
+import c3.signal.gates as gates
+from c3.c3objs import Quantity as Qty
 
 
 def align_yaxis(ax1, ax2):
@@ -73,6 +77,7 @@ class Experiment:
         self.dUs: dict = {}
         self.created_by = None
         self.logdir: str = None
+        self.psi_init = None
 
     def set_created_by(self, config):
         """
@@ -189,12 +194,14 @@ class Experiment:
     def __str__(self) -> str:
         return hjson.dumps(self.asdict())
 
-    def evaluate(self, seqs):
+    def evaluate(self, seqs, psi_init):
         """
         Compute the population values for a given sequence of operations.
 
         Parameters
         ----------
+        psi_init:
+            Initial state vector
         seqs: str list
             A list of control pulses/gates to perform on the device.
 
@@ -206,10 +213,15 @@ class Experiment:
         """
         model = self.pmap.model
         Us = tf_utils.evaluate_sequences(self.unitaries, seqs)
-        psi_init = model.tasks["init_ground"].initialise(
-            model.drift_H, model.lindbladian
-        )
-        self.psi_init = psi_init
+
+        if psi_init is not None:
+            self.psi_init = psi_init
+        else:
+            psi_init_ground = model.tasks["init_ground"].initialise(
+                model.drift_H, model.lindbladian
+            )
+            self.psi_init = psi_init_ground
+
         populations = []
         for U in Us:
             psi_final = tf.matmul(U, self.psi_init)
@@ -574,6 +586,46 @@ class Experiment:
 
         """
         self.opt_gates = gates
+
+    def change_pi_amp(self, amp):
+
+        t_final = self.pmap.instructions['Id'].t_end
+        sideband = 50e6
+
+        gauss_params_pi = {
+            "amp": Qty(value=amp, min_val=amp*0.9, max_val=amp*1.1, unit="V"),
+            "t_final": Qty(
+                value=t_final, min_val=0.5 * t_final, max_val=1.5 * t_final, unit="s"
+            ),
+            "sigma": Qty(
+                value=t_final / 4, min_val=t_final / 8, max_val=t_final / 2, unit="s"
+            ),
+            "xy_angle": Qty(
+                value=0.0, min_val=-0.5 * np.pi, max_val=2.5 * np.pi, unit="rad"
+            ),
+            "freq_offset": Qty(
+                value=-sideband - 0.5e6,
+                min_val=-60 * 1e6,
+                max_val=-40 * 1e6,
+                unit="Hz 2pi",
+            ),
+            "delta": Qty(value=-1, min_val=-5, max_val=3, unit=""),
+        }
+
+        gauss_env_pi = pulse.Envelope(
+            name="gauss",
+            desc="Gaussian comp for single-qubit gates",
+            params=gauss_params_pi,
+            shape=envelopes.gaussian_nonorm,
+        )
+
+        PI01p = gates.Instruction(name="PI01p", t_start=0.0, t_end=t_final, channels=["d1"])
+        PI01p.add_component(gauss_env_pi, "d1")
+        PI01p.add_component(self.pmap.instructions['PI01p'].comps['d1']['carrier'], "d1")  #reuse carrier
+
+        self.pmap.instructions['PI01p'] = PI01p
+
+        return PI01p
 
     def set_opt_gates_seq(self, seqs):
         """
