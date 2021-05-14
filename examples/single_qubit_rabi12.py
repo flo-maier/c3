@@ -198,7 +198,7 @@ def create_experiment(gatetime: np.float64 = 7e-9, anhar = -210e6) -> Exp:
 
     PI01p = gates.Instruction(name="PI01p", t_start=0.0, t_end=t_final, channels=["d1"])
     RX90p = gates.Instruction(name="RX90p", t_start=0.0, t_end=t_final, channels=["d1"])
-    RX90p12 = gates.Instruction(name="RX90p12", t_start=0.0, t_end=t_final, channels=["d1"])
+    RXp12 = gates.Instruction(name="RXp12", t_start=0.0, t_end=t_final, channels=["d1"])
     RXp = gates.Instruction(name="RXp", t_start=0.0, t_end=t_final, channels=["d1"])
     QId = gates.Instruction(name="Id", t_start=0.0, t_end=t_final, channels=["d1"])
 
@@ -206,8 +206,8 @@ def create_experiment(gatetime: np.float64 = 7e-9, anhar = -210e6) -> Exp:
     PI01p.add_component(carr, "d1")
     RX90p.add_component(gauss_env_single, "d1")
     RX90p.add_component(carr, "d1")
-    RX90p12.add_component(gauss_env_single, "d1")
-    RX90p12.add_component(carr2, "d1")
+    RXp12.add_component(gauss_env_pi, "d1")
+    RXp12.add_component(carr2, "d1")
     RXp.add_component(gauss_env_pi, "d1")
     RXp.add_component(carr, "d1")
 
@@ -227,7 +227,7 @@ def create_experiment(gatetime: np.float64 = 7e-9, anhar = -210e6) -> Exp:
     RY90m.comps["d1"]["gauss"].params["xy_angle"].set_value(1.5 * np.pi)
 
     parameter_map = PMap(
-        instructions=[QId, RX90p, RY90p, RX90m, RY90m, RX90p12, PI01p, RXp], model=model, generator=generator
+        instructions=[QId, RX90p, RY90p, RX90m, RY90m, RXp12, PI01p, RXp], model=model, generator=generator
     )
 
     # ### MAKE EXPERIMENT

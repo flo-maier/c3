@@ -124,3 +124,16 @@ def plot_fidelity(gate: str, channel: str, awg_errortype: str, error_values: np.
     plt.legend()
 
     return graph
+
+
+def plot_rabi12(pops, amps12):
+
+    fig, ax = plt.subplots()
+    pops = pops.transpose()
+    for count, state in enumerate(pops):
+        ax.plot(amps12,pops[count],label=count)
+    ax.set_xlabel('Amp [V]')
+    ax.set_ylabel('Population')
+    ax.legend()
+    fig.show()
+    fig.savefig('rabi12.png')

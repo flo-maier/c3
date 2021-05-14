@@ -627,6 +627,46 @@ class Experiment:
 
         return PI01p
 
+    def change_pi12_amp(self, amp):
+
+        t_final = self.pmap.instructions['Id'].t_end
+        sideband = 50e6
+
+        gauss_params_pi = {
+            "amp": Qty(value=amp, min_val=amp*0.9, max_val=amp*1.1, unit="V"),
+            "t_final": Qty(
+                value=t_final, min_val=0.5 * t_final, max_val=1.5 * t_final, unit="s"
+            ),
+            "sigma": Qty(
+                value=t_final / 4, min_val=t_final / 8, max_val=t_final / 2, unit="s"
+            ),
+            "xy_angle": Qty(
+                value=0.0, min_val=-0.5 * np.pi, max_val=2.5 * np.pi, unit="rad"
+            ),
+            "freq_offset": Qty(
+                value=-sideband - 0.5e6,
+                min_val=-60 * 1e6,
+                max_val=-40 * 1e6,
+                unit="Hz 2pi",
+            ),
+            "delta": Qty(value=-1, min_val=-5, max_val=3, unit=""),
+        }
+
+        gauss_env_pi = pulse.Envelope(
+            name="gauss",
+            desc="Gaussian comp for single-qubit gates",
+            params=gauss_params_pi,
+            shape=envelopes.gaussian_nonorm,
+        )
+
+        RXp12 = gates.Instruction(name="RXp12", t_start=0.0, t_end=t_final, channels=["d1"])
+        RXp12.add_component(gauss_env_pi, "d1")
+        RXp12.add_component(self.pmap.instructions['RXp12'].comps['d1']['carrier'], "d1")  #reuse carrier
+
+        self.pmap.instructions['RXp12'] = RXp12
+
+        return RXp12
+
     def set_opt_gates_seq(self, seqs):
         """
         Specify a selection of gates to be computed.
