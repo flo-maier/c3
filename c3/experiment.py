@@ -676,7 +676,7 @@ class Experiment:
         self.opt_gates = gates
 
     def change_pi_amp(self, amp):   #TODO
-        t_final = self.pmap.instructions['Id'].t_end
+        t_final = self.pmap.instructions['Id[0]'].t_end
         sideband = 50e6
 
         gauss_params_pi = {

@@ -39,18 +39,9 @@ def create_experiment(gatetime: np.float64 = 7e-9, anhar = -210e6) -> Exp:
     q1 = chip.Qubit(
         name="Q1",
         desc="Qubit 1",
-        freq=Qty(
-            value=freq,
-            min_val=4.995e9,
-            max_val=5.005e9,
-            unit="Hz 2pi",
-        ),
-        anhar=Qty(
-            value=anhar,
-            # min_val=-380e9,
-            # max_val=-120e6,
-            unit="Hz 2pi",
-        ),
+        freq=Qty(value=freq, min_val=4.995e9, max_val=5.005e9, unit="Hz 2pi"),
+        anhar=Qty(value=anhar, # min_val=-380e9, # max_val=-120e6,
+                 unit="Hz 2pi"),
         hilbert_dim=qubit_lvls,
         temp=Qty(value=qubit_temp, min_val=0.0, max_val=0.12, unit="K"),
     )

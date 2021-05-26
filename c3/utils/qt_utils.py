@@ -167,7 +167,7 @@ def xy_basis(lvls: int, vect: str):
     return psi
 
 
-def projector(dims, indices):
+def projector(dims, indices):   #use that for 3 dim
     """
     Computes the projector to cut down a matrix to the computational space. The
     subspaces indicated in indeces will be projected to the lowest two states,
